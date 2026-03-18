@@ -309,18 +309,45 @@
   }
 
   #tray {
-    flex: 1;
+    flex: 0 0 auto;
     width: 100%;
     overflow-x: auto;
     overflow-y: hidden;
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     gap: 14px;
-    padding: 14px 20px 24px; /* ruimte voor blok-zijkant onderin */
+    padding: 10px 20px 8px;
     scroll-snap-type: x mandatory;
     -webkit-overflow-scrolling: touch;
   }
   #tray::-webkit-scrollbar { display: none; }
+
+  /* Scroll indicator: dun lijntje direct onder de blokken */
+  #tray-scroll-indicator {
+    width: 100%;
+    padding: 4px 20px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+  }
+  #tray-track {
+    position: relative;
+    width: 120px;
+    height: 2px;
+    background: rgba(180,120,60,0.18);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  #tray-thumb {
+    position: absolute;
+    top: 0; left: 0;
+    height: 100%;
+    background: #C8864A;
+    border-radius: 2px;
+    transition: left 0.15s, width 0.15s;
+    min-width: 24px;
+  }
 
   /* Losse stukken in tray — geen kaart eromheen */
   .piece-wrap {
@@ -533,13 +560,9 @@
   </div>
   <div class="tray-label">Blokken</div>
   <div id="tray"></div>
-  <!-- Scroll indicator -->
-  <div id="tray-scroll-indicator" style="
-    width:100%; padding: 4px 20px 8px;
-    display:flex; align-items:center; justify-content:center; gap:6px;
-  ">
-    <div id="tray-dots" style="display:flex;gap:5px;align-items:center;"></div>
-    <span id="tray-arrow" style="font-size:14px;color:#C8864A;opacity:0.7;display:none;">›</span>
+  <!-- Scroll indicator: dun lijntje -->
+  <div id="tray-scroll-indicator">
+    <div id="tray-track"><div id="tray-thumb"></div></div>
   </div>
 </div>
 
@@ -721,12 +744,12 @@ async function renderShapeSprite(shape, templateMesh, PX) {
 
   const scene = new THREE.Scene();
 
-  // Licht puur van boven + klein fill voor textuur zichtbaarheid
-  scene.add(new THREE.AmbientLight(0xfff8f0, 0.9));
-  const top = new THREE.DirectionalLight(0xfffaf0, 1.4);
-  top.position.set(0, 10, 0);
+  // Licht warm — houttint versterken
+  scene.add(new THREE.AmbientLight(0xffe8d0, 1.0));
+  const top = new THREE.DirectionalLight(0xfff0d8, 1.6);
+  top.position.set(-1, 10, 1);
   scene.add(top);
-  const side = new THREE.DirectionalLight(0xffeedd, 0.5);
+  const side = new THREE.DirectionalLight(0xffddbb, 0.4);
   side.position.set(-3, 5, 3);
   scene.add(side);
 
@@ -759,6 +782,34 @@ async function renderShapeSprite(shape, templateMesh, PX) {
   cam.updateProjectionMatrix();
 
   renderer.render(scene, cam);
+
+  // Teken dunne lichte lijntjes op het canvas — cel-grenzen
+  const ctx = canvas.getContext('2d');
+  const DPR = 2;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,245,230,0.28)';
+  ctx.lineWidth = 0.8 * DPR;
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < (shape[r]||[]).length; c++) {
+      if (!shape[r][c]) continue;
+      // Rechter grens — alleen als buur rechts ook gevuld
+      if (shape[r]?.[c+1]) {
+        const x = (c + 1) * PX * DPR;
+        const y1 = r * PX * DPR;
+        const y2 = (r + 1) * PX * DPR;
+        ctx.beginPath(); ctx.moveTo(x, y1); ctx.lineTo(x, y2); ctx.stroke();
+      }
+      // Onder grens — alleen als buur onder ook gevuld
+      if (shape[r+1]?.[c]) {
+        const y = (r + 1) * PX * DPR;
+        const x1 = c * PX * DPR;
+        const x2 = (c + 1) * PX * DPR;
+        ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x2, y); ctx.stroke();
+      }
+    }
+  }
+  ctx.restore();
 
   const dataURL = canvas.toDataURL('image/png');
   renderer.dispose();
@@ -1455,40 +1506,30 @@ function shapeKey(shape) {
 }
 
 function updateTrayScrollIndicator() {
-  const tray  = document.getElementById('tray');
-  const dotsEl = document.getElementById('tray-dots');
-  const arrowEl = document.getElementById('tray-arrow');
-  if (!tray || !dotsEl) return;
+  const tray   = document.getElementById('tray');
+  const track  = document.getElementById('tray-track');
+  const thumb  = document.getElementById('tray-thumb');
+  if (!tray || !thumb) return;
 
-  const items  = tray.children.length;
-  const trayW  = tray.clientWidth;
-  const scrollW = tray.scrollWidth;
-  const hasMore = scrollW > trayW + 8;
+  const scrollW  = tray.scrollWidth;
+  const clientW  = tray.clientWidth;
+  const scrollL  = tray.scrollLeft;
+  const trackW   = track ? track.clientWidth : 120;
 
-  arrowEl.style.display = hasMore ? 'block' : 'none';
-
-  dotsEl.innerHTML = '';
-  const scrollPct  = scrollW > trayW ? tray.scrollLeft / (scrollW - trayW) : 0;
-  const activeDot  = Math.round(scrollPct * (items - 1));
-  const maxDots    = Math.min(items, 10);
-
-  for (let i = 0; i < maxDots; i++) {
-    const dot = document.createElement('div');
-    const active = i === Math.round(activeDot * (maxDots-1) / Math.max(items-1,1));
-    dot.style.cssText = `
-      width:${active?8:5}px; height:${active?8:5}px;
-      border-radius:50%;
-      background:${active?'#C8864A':'#D4A574'};
-      opacity:${active?1:0.4};
-      transition:all 0.2s; cursor:pointer; flex-shrink:0;
-    `;
-    const targetIdx = Math.round(i * (items-1) / Math.max(maxDots-1,1));
-    dot.onclick = () => {
-      const el = tray.children[targetIdx];
-      if (el) el.scrollIntoView({ behavior:'smooth', inline:'center', block:'nearest' });
-    };
-    dotsEl.appendChild(dot);
+  if (scrollW <= clientW + 4) {
+    // Alles past — verberg indicator
+    thumb.style.width = '100%';
+    thumb.style.left  = '0%';
+    if (track) track.style.opacity = '0';
+    return;
   }
+
+  if (track) track.style.opacity = '1';
+  const ratio    = clientW / scrollW;
+  const thumbW   = Math.max(20, ratio * trackW);
+  const thumbL   = (scrollL / (scrollW - clientW)) * (trackW - thumbW);
+  thumb.style.width = thumbW + 'px';
+  thumb.style.left  = thumbL + 'px';
 }
 
 function renderTray() {
@@ -1528,8 +1569,8 @@ function renderTray() {
 
       const container = document.createElement('div');
       container.style.cssText = `position:relative;display:inline-block;width:${imgW}px;height:${imgH}px;
-        filter: drop-shadow(2px 4px 3px rgba(80,40,10,0.40)) drop-shadow(0 1px 0 rgba(80,40,10,0.25));
-        ${sel ? 'filter: drop-shadow(3px 6px 8px rgba(180,120,40,0.55)) drop-shadow(0 1px 0 rgba(80,40,10,0.3));' : ''}
+        filter: drop-shadow(0px 5px 0px rgba(100,55,15,0.55)) drop-shadow(0 7px 6px rgba(60,30,5,0.30));
+        ${sel ? 'filter: drop-shadow(0px 7px 0px rgba(140,80,20,0.6)) drop-shadow(0 10px 10px rgba(60,30,5,0.4));' : ''}
       `;
 
       const img = document.createElement('img');
