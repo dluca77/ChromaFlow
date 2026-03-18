@@ -764,6 +764,14 @@ async function renderShapeSprite(shape, templateMesh, PX, forBoard) {
 }
 
 async function init3D() {
+  // Timeout: als het na 15 sec nog niet klaar is, gewoon doorgaan
+  const timeout = setTimeout(() => {
+    console.warn('3D laden timeout — doorgaan met SVG fallback');
+    document.getElementById('loading-screen').style.display = 'none';
+    window.PIECE_SPRITES = null;
+    window.dispatchEvent(new Event('sprites-ready'));
+  }, 15000);
+
   setLoading('3D blokjes laden...', 5);
 
   // Laad GLB
@@ -775,7 +783,7 @@ async function init3D() {
     gltf = await new Promise((res, rej) => loader.parse(buf, '', res, rej));
   } catch(e) {
     console.error('GLB laad fout:', e);
-    // Fallback: geen sprites, game werkt gewoon met SVG
+    clearTimeout(timeout);
     document.getElementById('loading-screen').style.display = 'none';
     window.PIECE_SPRITES = null;
     window.dispatchEvent(new Event('sprites-ready'));
@@ -787,6 +795,7 @@ async function init3D() {
   gltf.scene.traverse(o => { if (o.isMesh && !templateMesh) templateMesh = o; });
 
   if (!templateMesh) {
+    clearTimeout(timeout);
     document.getElementById('loading-screen').style.display = 'none';
     window.PIECE_SPRITES = null;
     window.dispatchEvent(new Event('sprites-ready'));
@@ -799,31 +808,22 @@ async function init3D() {
 
   for (const def of SHAPE_DEFS) {
     const key = shapeKey(def.shape);
-
-    // Tray sprite — klein beetje hoek voor diepte gevoel
-    const longest = Math.max(def.shape.length, Math.max(...def.shape.map(r=>r.length)));
-    const pxTray  = Math.max(16, Math.round(80 / longest));
-    const trayUrl = await renderShapeSprite(def.shape, templateMesh, pxTray, false);
-    window.PIECE_SPRITES[key + '_tray'] = trayUrl;
+    try {
+      const longest = Math.max(def.shape.length, Math.max(...def.shape.map(r=>r.length)));
+      const pxTray  = Math.max(16, Math.round(80 / longest));
+      window.PIECE_SPRITES[key + '_tray']  = await renderShapeSprite(def.shape, templateMesh, pxTray);
+      window.PIECE_SPRITES[key + '_board'] = await renderShapeSprite(def.shape, templateMesh, 44);
+    } catch(e) {
+      console.warn('Sprite render fout:', def.name, e);
+    }
     done++;
-
-    // Board sprite — puur top-down zodat het exact op grid past
-    const boardUrl = await renderShapeSprite(def.shape, templateMesh, 44, true);
-    window.PIECE_SPRITES[key + '_board'] = boardUrl;
-    done++;
-
-    const pct = Math.round(5 + (done / total) * 90);
-    setLoading(`Vormen renderen... ${done}/${total}`, pct);
-    await new Promise(r => requestAnimationFrame(r));
-  }
-
-    const pct = Math.round(5 + (done / total) * 90);
-    setLoading(`Vormen renderen... ${done}/${total}`, pct);
+    setLoading(`Vormen renderen... ${done}/${SHAPE_DEFS.length}`, Math.round(5 + (done / SHAPE_DEFS.length) * 90));
     await new Promise(r => requestAnimationFrame(r));
   }
 
   setLoading('Klaar!', 100);
-  await new Promise(r => setTimeout(r, 300));
+  await new Promise(r => setTimeout(r, 200));
+  clearTimeout(timeout);
   document.getElementById('loading-screen').style.display = 'none';
   window.dispatchEvent(new Event('sprites-ready'));
 }
